@@ -1,10 +1,17 @@
 #include "httprequest.h"
 
-#include "../log/log.h"
-#include "http.h"
+#include <algorithm>
+#include <cstdio>
+#include <cwctype>
+#include <mysql/mysql.h>
 #include <string>
 #include <utility>
 #include <iostream>
+#include <assert.h>
+
+#include "../log/log.h"
+#include "../db/mysql.h"
+#include "http.h"
 
 namespace hayroc {
 
@@ -15,6 +22,15 @@ HttpRequest::HttpRequest() {
 
 HttpRequest::~HttpRequest() {
 
+}
+
+void HttpRequest::init() {
+  m_buffer.retrieveAll();
+  m_parseStatus = ParseStatus::RequestLine;
+  m_method = Method::GET;
+  m_version = Version::Http11;
+  m_headers.clear();
+  m_params.clear();
 }
 
 int HttpRequest::recv(int fd, int &errorNum) {
@@ -59,13 +75,13 @@ HttpCode HttpRequest::parse() {
           return httpCode;
         } else {
           httpCode = parseParams();
+          httpCode = verify();
           return httpCode;
         }
         break;
       }
       default: {
         DEBUG("defalut internal server error " + std::to_string(static_cast<int>(m_parseStatus)));
-        std::cout << static_cast<int>(m_parseStatus) << "\n";
         return HttpCode::InternalServerError;
       }
     }
@@ -156,14 +172,112 @@ HttpCode HttpRequest::parsePath() {
 }
 
 HttpCode HttpRequest::parseParams() {
-  // todo
+  if(m_body.empty()) {
+    return HttpCode::OK;
+  }
+
+  int num = 0;
+  int i = 0, j = 0;
+  int n = m_body.size();
+  auto converHex = [](char ch) {
+    if(ch >= 'A' && ch <= 'F') return char(ch -'A' + 10);
+    if(ch >= 'a' && ch <= 'f') return char(ch -'a' + 10);
+    return ch;
+  };
+
+  std::string key, value;
+  for(; i < n; i++) {
+    char ch = m_body[i];
+    switch(ch) {
+      case '=': {
+        key = m_body.substr(j, i - j);
+        j = i + 1;
+        break;
+      }
+      case '+': {
+        m_body[i] = ' ';
+        break;
+      }
+      case '%': {
+        num = converHex(m_body[i + 1]) * 16 + converHex(m_body[i + 2]);
+        m_body[i + 2] = num % 10 + '0';
+        m_body[i + 1] = num / 10 + '0';
+        i += 2;
+        break;
+      }
+      case '&': {
+        value = m_body.substr(j, i - j);
+        j = i + 1;
+        m_params[key] = value;
+        DEBUG("解析urlencode " + key + " " + value);
+        break;
+      }
+      default: {
+        break;
+      }
+    }
+  }
+  if(m_params.count(key) == 0 && j < i) {
+    value = m_body.substr(j, i - j);
+    m_params[key] = value;
+  }
+  return HttpCode::OK;
+}
+
+HttpCode HttpRequest::verify() {
+  std::string username = m_params["username"];
+  std::string password = m_params["password"];
+
+  MYSQL* sql = nullptr;
+  MysqlGuard getTempSqlConn(&sql);
+
+  std::string query = "SELECT username, password FROM user WHERE username='" + username + "' LIMIT 1";
+  std::string insert = "INSERT INTO user(username, password) VALUES('" + username + "', '" + password + "')";
+
+  if(mysql_query(sql, query.data())) {
+    return HttpCode::InternalServerError;
+  }
+  MYSQL_RES* sqlres = mysql_store_result(sql);
+  int size = mysql_num_fields(sqlres);
+
+  bool fagUser = false, fagPass = false;
+  while(MYSQL_ROW row = mysql_fetch_row(sqlres)) {
+    std::string tmp(row[1]);
+    fagUser = true;
+    if(password == tmp) {
+      fagPass = true;
+    }
+  }
+
+  if(m_url == "/login") {
+    if(fagUser && fagPass) {
+      m_path = "./static/welcome.html";
+    } else {
+      m_path = "./static/error.html";
+    }
+  } else if(m_url == "/register") {
+    if(!fagUser) {
+      if(mysql_query(sql, insert.data())) {
+        m_path = "./static/error.html";
+      } else {
+        m_path = "./static/welcome.html";
+      }
+    } else {
+      m_path = "./static/error.html";
+    }
+  } else {
+    m_path = "./static/error.html";
+  }
+
   return HttpCode::OK;
 }
 
 bool HttpRequest::isKeepAlive() {
   auto it = m_headers.find("Connection");
   if(it != m_headers.end()) {
-    if(it->second == "Keep-Alive") {
+    auto& str = it->second;
+    std::transform(str.begin(), str.end(), str.begin(), std::towlower);
+    if(str == "keep-alive") {
       return true;
     } else {
       return false;

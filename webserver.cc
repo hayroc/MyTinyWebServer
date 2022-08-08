@@ -1,5 +1,6 @@
 #include "webserver.h"
 
+#include "base/singleton.h"
 #include "http/http.h"
 #include "log/log.h"
 #include "base/epoll.h"
@@ -14,6 +15,7 @@
 #include <memory>
 #include <stdlib.h>
 #include <string>
+#include <sys/epoll.h>
 #include <type_traits>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -21,6 +23,8 @@
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+
+#include "db/mysql.h"
 
 namespace hayroc {
 
@@ -31,6 +35,9 @@ WebServer::WebServer(const std::string& ip, int port)
     m_timerMgr(std::make_shared<TimerMgr>()),
     m_eventLoop(std::make_shared<ThreadPool>()) {
   assert(m_serverFd != -1);
+
+  // init mysql connection pool
+  Singleton<MysqlConnectionPool>::GetInstance()->init("localhost", 3306, "root", "root", "MyTinyWebServer");
   std::cout << "listen on " << ip << ":" << std::to_string(port) << std::endl;
 }
 
@@ -66,13 +73,14 @@ void WebServer::newConnetion() { // ET
       if(errno == EAGAIN) {
         break;
       } else {
-        DEBUG("accept error");
+        ERROR("cant accept new conntion");
         break;
       }
     }
-    DEBUG("新连接" + std::to_string(connFd));
+    DEBUG("new connect" + std::to_string(connFd));
+    std::cout << "new connect: " << connFd << std::endl;
     HttpConnection* httpConn = new HttpConnection(connFd);
-    Timer::ptr httpConnTimer = m_timerMgr->addTimer(500, std::bind(&WebServer::closeConnetion, this, httpConn));
+    Timer::ptr httpConnTimer = m_timerMgr->addTimer(TIMEOUT, std::bind(&WebServer::closeConnetion, this, httpConn));
     httpConn->setTimer(httpConnTimer);
     m_epoll->add(connFd, (EPOLLIN | EPOLLET | EPOLLONESHOT), httpConn);
   }
@@ -89,26 +97,29 @@ void WebServer::closeConnetion(HttpConnection* httpConnection) {
   m_timerMgr->delTimer(httpConnection->getTimer());
   m_epoll->del(fd, 0, httpConnection);
   delete httpConnection;
-  DEBUG("新连接 end");
+  DEBUG("关闭连接 end");
 }
 
 void WebServer::handleRequest(HttpConnection* httpConnection) {
-  DEBUG("处理请求");
+  DEBUG("处理请求: " + std::to_string(httpConnection->getFd()));
 
   m_timerMgr->delTimer(httpConnection->getTimer());
-  httpConnection->setWorking(true);
 
+  httpConnection->setWorking(true);
+  httpConnection->initReq();
   int errorNum;
   int size = httpConnection->read(errorNum);
-  DEBUG("处理请求 1");
 
   if(size == 0 || (size < 0 && errorNum != EAGAIN)) {
-    DEBUG("处理请求 2");
     httpConnection->setWorking(false);
     closeConnetion(httpConnection);
   } else {
+    httpConnection->setWorking(true);
+    Timer::ptr timer = m_timerMgr->addTimer(TIMEOUT, std::bind(&WebServer::closeConnetion, this, httpConnection));
+    httpConnection->setTimer(timer);
+    httpConnection->initRes();
     httpConnection->process();
-    m_epoll->mod(httpConnection->getFd(), (EPOLLIN | EPOLLOUT | EPOLLET | EPOLLONESHOT), httpConnection);
+    m_epoll->mod(httpConnection->getFd(), (EPOLLOUT | EPOLLET | EPOLLONESHOT), httpConnection);
   }
   DEBUG("处理请求 end");
 }
@@ -116,47 +127,33 @@ void WebServer::handleRequest(HttpConnection* httpConnection) {
 void WebServer::handleResponse(HttpConnection* httpConnection) {
   DEBUG("处理响应");
   m_timerMgr->delTimer(httpConnection->getTimer());
-  httpConnection->setWorking(true);
 
+  httpConnection->setWorking(true);
   int errorNum;
   int size = httpConnection->send(errorNum);
+  DEBUG("已发送: " + std::to_string(size) + " 待发送: " + std::to_string(httpConnection->toSendSize()) + (size < 0 ? strerror(errorNum) : ""));
 
   if(httpConnection->toSendSize() == 0) {
     if(!httpConnection->isKeepAlive()) {
-      std::cout << "i am here" << "\n";
+      httpConnection->setWorking(false);
       closeConnetion(httpConnection);
+    } else { // keep alive add new Timer
+      Timer::ptr timer = m_timerMgr->addTimer(TIMEOUT, std::bind(&WebServer::closeConnetion, this, httpConnection));
+      httpConnection->setTimer(timer);
+      httpConnection->setWorking(false);
+      m_epoll->mod(httpConnection->getFd(), (EPOLLIN | EPOLLET | EPOLLONESHOT), httpConnection);
     }
   } else if(size < 0) {
-    std::cout << httpConnection->getFd() <<  " to Send Size: " << httpConnection->toSendSize() << std::endl;
     if(errorNum == EAGAIN) {
-      Timer::ptr timer = m_timerMgr->addTimer(500, std::bind(&WebServer::closeConnetion, this, httpConnection));
+      Timer::ptr timer = m_timerMgr->addTimer(TIMEOUT, std::bind(&WebServer::closeConnetion, this, httpConnection));
       httpConnection->setTimer(timer);
       httpConnection->setWorking(true);
-      m_epoll->mod(httpConnection->getFd(), (EPOLLIN | EPOLLOUT | EPOLLET | EPOLLONESHOT), httpConnection);
+      m_epoll->mod(httpConnection->getFd(), (EPOLLOUT | EPOLLET | EPOLLONESHOT), httpConnection);
     } else {
+      httpConnection->setWorking(false);
       closeConnetion(httpConnection);
     }
   }
-
-  /*
-  if(size == -1 && errorNum != EAGAIN) {
-    httpConnection->setWorking(false);
-    closeConnetion(httpConnection);
-  } else {
-    if(httpConnection->toSendSize() == 0 && !httpConnection->isKeepAlive()) {
-      closeConnetion(httpConnection);
-    } else {
-      Timer::ptr timer = m_timerMgr->addTimer(500, std::bind(&WebServer::closeConnetion, this, httpConnection));
-      httpConnection->setTimer(timer);
-      m_epoll->mod(httpConnection->getFd(), (EPOLLIN | EPOLLOUT | EPOLLET | EPOLLONESHOT), httpConnection);
-      if(errorNum == EAGAIN) {
-        httpConnection->setWorking(true);
-      } else {
-        httpConnection->setWorking(false);
-      }
-    }
-  }
-  */
   DEBUG("处理响应 end");
 }
 
@@ -171,7 +168,7 @@ int WebServer::createServerFd(const std::string& ip, int port) {
 
   int serverFd;
   int optval = 1;
-  if((serverFd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1){
+  if((serverFd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1) {
     close(serverFd);
     return -1;
   }

@@ -21,19 +21,21 @@ using Map = std::map<std::string, std::string>;
 class HttpConnection {
 public:
   using ptr = std::shared_ptr<HttpConnection>;
-  static const int TIMEOUT = 500;
+  static const int TIMEOUT = 5000;
 
   int read(int &errorNum) { return m_req->recv(m_connFd, errorNum); }
   int send(int &errorNum) { return m_res->send(m_connFd, errorNum); }
   void process();
   HttpCode parse();
   void makeResponse();
+  void initReq();
+  void initRes();
 
   void setHttpCode(HttpCode code) { m_res->setHttpCode(code); }
   void setTimer(const Timer::ptr timer) { m_timer = timer; }
   void setWorking(bool working) { m_working = working; }
   bool isWorking() const { return m_working; }
-  bool isKeepAlive() const { return m_keepAlive; }
+  bool isKeepAlive() const { return m_res->isKeepAlive(); }
   int getFd() const { return m_connFd; }
   int toSendSize() const { return m_res->toSendSize(); }
   Timer::ptr getTimer() { return m_timer; }
@@ -45,7 +47,6 @@ public:
   ~HttpConnection();
 
 private:
-  bool m_keepAlive;
   bool m_working;
   int m_connFd;
   Timer::ptr m_timer;

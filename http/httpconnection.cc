@@ -1,20 +1,29 @@
 #include "httpconnection.h"
+#include <iostream>
 
 namespace hayroc {
 
 HttpConnection::HttpConnection(int connfd) 
-  : m_connFd(connfd),
+  : m_working(false),
+    m_connFd(connfd),
     m_timer(nullptr),
     m_req(new HttpRequest),
     m_res(new HttpResponse) {
-  m_keepAlive = true;
 }
 
-
 HttpConnection::~HttpConnection() {
+  std::cout << "close connect: " << m_connFd << std::endl;
   if(m_connFd) {
     close(m_connFd);
   }
+}
+
+void HttpConnection::initReq() {
+  m_req->init();
+}
+
+void HttpConnection::initRes() {
+  m_res->init();
 }
 
 void HttpConnection::process() {
@@ -22,7 +31,6 @@ void HttpConnection::process() {
   HttpCode httpCode = m_req->parse();
   DEBUG("after parse the code is " + std::to_string(static_cast<int>(httpCode)));
   // make response
-  m_res->init();
   m_res->setHttpCode(httpCode);
   m_res->setPath(m_req->getPath());
   m_res->setKeepAlive(m_req->isKeepAlive());

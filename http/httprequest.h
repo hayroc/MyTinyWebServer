@@ -28,8 +28,10 @@ public:
 
   int recv(int fd, int &errorNum);
   HttpCode parse();
+  HttpCode verify();
   bool isKeepAlive();
   void resetParse();
+  void init();
 
   std::string getPath() const { return m_path; }
   std::string getBody() const { return m_body; }

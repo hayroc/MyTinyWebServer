@@ -12,7 +12,7 @@ namespace hayroc {
 class WebServer {
 public:
   static const int MAXCONNECT = 10000;
-  static const int TIMEOUT = 500;
+  static const int TIMEOUT = 10000;
   void run();
 
 private:

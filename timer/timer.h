@@ -43,7 +43,7 @@ class TimerMgr {
 public:
   using ptr = std::shared_ptr<TimerMgr>;
   void updTime() { m_nowTime = Clock::now(); }
-  std::shared_ptr<Timer> addTimer(const int& time, Function callbackFunc);
+  std::shared_ptr<Timer> addTimer(int time, Function callbackFunc);
   void delTimer(std::shared_ptr<Timer> timer);
   void tick();
   int getExprieTime();

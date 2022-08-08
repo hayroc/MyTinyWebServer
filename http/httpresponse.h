@@ -20,8 +20,7 @@ enum class HttpCode;
 class HttpResponse {
 public:
   using ptr = std::shared_ptr<HttpResponse>;
-
-  static const int TIMEOUT = 500;
+  static const int TIMEOUT = 10000;
 
   void init();
   void makeResponse();
@@ -29,6 +28,7 @@ public:
   auto getPath() const { return m_path; }
   auto getHttpCode() const { return m_httpCode; }
   int toSendSize() const { return iov[0].iov_len + iov[1].iov_len; }
+  bool isKeepAlive() const { return m_keepAlive; }
   void setPath(const std::string& path) { m_path = path; }
   void setHttpCode(HttpCode httpCode) { m_httpCode = httpCode; }
   void setKeepAlive(bool keepAlive) { m_keepAlive = keepAlive; }

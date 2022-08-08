@@ -61,6 +61,8 @@ int HttpResponse::send(int fd, int &errorNum) {
 
 void HttpResponse::makeResponse() {
   DEBUG("http code is " + getHttpCodeTitle());
+  DEBUG("http connetion : " + (isKeepAlive() ? "keepAlive" : "close"));
+
   makeBody();
   appendResponseLine();
   appendHeader();
@@ -70,7 +72,9 @@ void HttpResponse::makeResponse() {
   iov[0].iov_len = m_buffer.readableBytes();
   iov[1].iov_base = m_file;
   iov[1].iov_len = m_fileStat.st_size;
+
   DEBUG(m_buffer.peek());
+  DEBUG(m_file);
 }
 
 std::string HttpResponse::getHttpCodeTitle() {
@@ -117,6 +121,7 @@ void HttpResponse::appendHeader() {
   std::string contentType = "Content-Type: " + getFileType() + "; charset=utf8\r\n";
   std::string connetion;
   if(m_keepAlive) {
+  // if(false) {
     connetion = "Connection: Keep-Alive\r\n";
     connetion += "Keep-Alive: timeout=" + std::to_string(TIMEOUT) + "\r\n";
   } else {
@@ -175,9 +180,14 @@ void HttpResponse::checkPath() {
 }
 
 void HttpResponse::init() {
-  m_params.clear();
-
   if(m_file) { unmap(); }
+
+  m_buffer.retrieveAll();
+  m_params.clear();
+  m_keepAlive = true;
+  m_httpCode = HttpCode::OK;
+  iov[0].iov_len = 0;
+  iov[1].iov_len = 0;
   bzero(&m_fileStat, sizeof(m_fileStat));
 }
 

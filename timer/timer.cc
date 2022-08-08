@@ -6,7 +6,7 @@
 
 namespace hayroc {
 
-std::shared_ptr<Timer> TimerMgr::addTimer(const int &time, Function callbackFunc) {
+std::shared_ptr<Timer> TimerMgr::addTimer(int time, Function callbackFunc) {
   std::shared_ptr<Timer> timer = std::make_shared<Timer>(Clock::now() + static_cast<MS>(time), callbackFunc);
 
   if(true) {
