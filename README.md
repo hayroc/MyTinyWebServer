@@ -10,7 +10,7 @@
 
 ## 运行
 服务器环境
-- Manjaro Linux
+- Linux
 - MySQL 8.0
 
 创建数据库
